@@ -1,4 +1,4 @@
-const API = "http://localhost:8000";
+const API = "http://localhost:8080";
 const c = document.getElementById("c");
 const ctx = c.getContext("2d");
 let drawing=false, pts=[];
