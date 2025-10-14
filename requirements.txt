@@ -1,0 +1,10 @@
+fastapi
+uvicorn[standard]
+yfinance
+pandas
+numpy
+scipy
+duckdb
+pyarrow
+fastdtw
+pydantic
