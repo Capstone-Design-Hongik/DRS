@@ -1,0 +1,25 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>DRS - Drawing Stock</title>
+  <style>
+    body{font-family:system-ui;margin:20px}
+    #c{border:1px solid #ccc; touch-action:none}
+    .row{margin-top:10px; display:flex; gap:8px}
+    button{padding:8px 12px; cursor:pointer}
+    .card{border:1px solid #eee;padding:10px;margin-top:10px}
+  </style>
+</head>
+<body>
+  <h2>스케치 → 유사 종목 추천</h2>
+  <canvas id="c" width="800" height="300"></canvas>
+  <div class="row">
+    <button id="clear">지우기</button>
+    <button id="ingest">데이터 준비(/ingest)</button>
+    <button id="search">유사도 검색</button>
+  </div>
+  <div id="result"></div>
+  <script src="script.js"></script>
+</body>
+</html>
