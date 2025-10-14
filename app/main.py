@@ -10,7 +10,7 @@ from .similar import rank_top_k
 app = FastAPI(title="DRS - Drawing Stock")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
-CACHE = {"matrix": None, "tickers": None, "target_len": 200}
+CACHE = {"matrix": None, "tickers": None, "target_len": 200, "norm_map": None,}
 
 @app.get("/health")
 def health():
@@ -27,8 +27,13 @@ def ingest(req: IngestRequest):
     save_meta({"tickers": list(ma20.keys()), "file": p, "days": req.days, "ts": time.time()})
 
     matrix, T = dict_to_matrix(ma20, target_len=CACHE["target_len"])
-    CACHE["matrix"], CACHE["tickers"] = matrix, T
+    norm_map = {}
+    for i, t in enumerate(T):
+        norm_map[t] = matrix[i, :].tolist()
+    CACHE["matrix"], CACHE["tickers"], CACHE["norm_map"] = matrix, T, norm_map
     return {"tickers_count": len(T), "target_len": CACHE["target_len"]}
+    
+    
 
 @app.post("/similar", response_model=SimilarResponse)
 def similar(req: SketchRequest):
@@ -42,6 +47,16 @@ def similar(req: SketchRequest):
 
     y = np.array(req.y, dtype=float)
     sketch_vec = normalize_pipeline(y, target_len=CACHE["target_len"])
+
     pairs = rank_top_k(sketch_vec, CACHE["matrix"], CACHE["tickers"], k=5)
-    items = [SimilarResponseItem(ticker=t, score=s, rank=i+1) for i,(t,s) in enumerate(pairs)]
+
+    items = []
+    for i, (t, s) in enumerate(pairs):
+        series_norm = CACHE["norm_map"][t]  # 정규화된 MA20
+        items.append(SimilarResponseItem(
+            ticker=t, score=s, rank=i+1,
+            series_norm=series_norm,
+            sketch_norm=sketch_vec.tolist()
+        ))
     return SimilarResponse(items=items)
+# series_norm: 정규화된 MA20 시계열

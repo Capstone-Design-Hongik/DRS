@@ -12,6 +12,8 @@ class SimilarResponseItem(BaseModel):
     ticker: str
     score: float
     rank: int
+    series_norm: List[float]
+    sketch_norm: List[float]
 
 class SimilarResponse(BaseModel):
     items: List[SimilarResponseItem]
