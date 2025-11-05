@@ -1,4 +1,8 @@
-.venv/
+echo ".venv/
 __pycache__/
-data/*.parquet
-data/meta.json
+*.pyc
+*.parquet
+data/
+.DS_Store
+.env
+" > .gitignore
