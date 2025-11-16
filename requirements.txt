@@ -8,4 +8,7 @@ duckdb
 pyarrow
 fastdtw
 pydantic
+pydantic-settings
 requests
+slowapi
+python-dotenv

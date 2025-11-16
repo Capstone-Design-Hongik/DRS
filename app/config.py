@@ -1,0 +1,48 @@
+"""Configuration management using pydantic-settings"""
+from pydantic_settings import BaseSettings
+from typing import List
+import json
+
+
+class Settings(BaseSettings):
+    """Application settings with environment variable support"""
+
+    # API Settings
+    api_host: str = "0.0.0.0"
+    api_port: int = 8080
+    api_title: str = "DRS - Drawing Stock"
+
+    # CORS Settings
+    cors_origins: str = '["http://localhost:8080", "http://127.0.0.1:8080"]'
+
+    # Data Settings
+    target_len: int = 200
+    cache_ttl_sec: int = 86400  # 24 hours
+    max_tickers: int = 5000
+
+    # Rate Limiting
+    rate_limit_ingest: str = "5/minute"
+    rate_limit_similar: str = "20/minute"
+
+    # Feature Settings
+    min_data_points: int = 30
+    min_ma_points: int = 25
+
+    # Log Level
+    log_level: str = "INFO"
+
+    class Config:
+        env_file = ".env"
+        case_sensitive = False
+
+    @property
+    def cors_origins_list(self) -> List[str]:
+        """Parse CORS origins from JSON string"""
+        try:
+            return json.loads(self.cors_origins)
+        except:
+            return ["http://localhost:8080"]
+
+
+# Global settings instance
+settings = Settings()

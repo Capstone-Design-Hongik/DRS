@@ -1,4 +1,7 @@
-const API = "http://localhost:8080";
+// API URL: 환경에 따라 자동 설정
+const API = window.location.origin.includes('localhost') || window.location.origin.includes('127.0.0.1')
+  ? "http://localhost:8080"
+  : window.location.origin;
 const c = document.getElementById("c");
 const ctx = c.getContext("2d");
 let drawing=false, pts=[];

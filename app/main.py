@@ -1,8 +1,16 @@
 # app/main.py
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 import numpy as np, pandas as pd, time
+import logging
+import threading
+from pathlib import Path
 
+from .config import settings
 from .models import IngestRequest, SketchRequest, SimilarResponse, SimilarResponseItem
 from .tickers import get_tickers
 from .data_io import (
@@ -13,107 +21,212 @@ from .data_io import (
 from .features import dict_to_matrix, normalize_pipeline
 from .similar import rank_top_k
 
-app = FastAPI(title="DRS - Drawing Stock")
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+# Logging configuration
+logging.basicConfig(
+    level=getattr(logging, settings.log_level),
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
+# Rate limiter
+limiter = Limiter(key_func=get_remote_address)
+
+# FastAPI app
+app = FastAPI(title=settings.api_title)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# CORS middleware with restricted origins
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.cors_origins_list,
+    allow_credentials=True,
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type"]
+)
+
+# Mount static files (web frontend)
+web_dir = Path(__file__).parent.parent / "web"
+if web_dir.exists():
+    app.mount("/web", StaticFiles(directory=str(web_dir)), name="web")
+    logger.info(f"Mounted static files from {web_dir}")
+
+# Global cache with thread safety
 CACHE = {
     "matrix": None,
     "tickers": None,
-    "target_len": 200,
+    "target_len": settings.target_len,
     "norm_map": None,   # ticker -> normalized vector(list)
 }
+CACHE_LOCK = threading.Lock()
 
 @app.on_event("startup")
 def warmup():
-    # 서버 시작 시, 기존 캐시(parquet)가 있으면 메모리 캐시 생성
-    df = load_ma20_parquet()
-    if df is not None and not df.empty:
-        ma20 = {c: df[c].dropna() for c in df.columns}
-        matrix, T = dict_to_matrix(ma20, target_len=CACHE["target_len"])
-        norm_map = {t: matrix[i, :].tolist() for i, t in enumerate(T)}
-        CACHE.update({"matrix": matrix, "tickers": T, "norm_map": norm_map})
+    """서버 시작 시 기존 캐시(parquet)가 있으면 메모리 캐시 생성"""
+    logger.info("Starting warmup: loading cached data...")
+    try:
+        df = load_ma20_parquet()
+        if df is not None and not df.empty:
+            ma20 = {c: df[c].dropna() for c in df.columns}
+            matrix, T = dict_to_matrix(ma20, target_len=CACHE["target_len"])
+            norm_map = {t: matrix[i, :].tolist() for i, t in enumerate(T)}
+
+            with CACHE_LOCK:
+                CACHE.update({"matrix": matrix, "tickers": T, "norm_map": norm_map})
+
+            logger.info(f"Warmup completed: {len(T)} tickers loaded into cache")
+        else:
+            logger.info("No cached data found. Please run /ingest first.")
+    except Exception as e:
+        logger.error(f"Warmup failed: {e}")
 
 @app.get("/health")
 def health():
     return {"ok": True}
 
 @app.post("/ingest")
+@limiter.limit(settings.rate_limit_ingest)
 def ingest(
+    request: Request,
     req: IngestRequest,
     force_refresh: bool = Query(False),
-    max_tickers: int = Query(5000, ge=10, le=5000)  # 기본 5000개 사용
+    max_tickers: int = Query(5000, ge=10, le=5000)
 ):
-    # 1) 티커 로드(캐시/리프레시 지원)
-    tickers = get_tickers(max_count=max_tickers, force_refresh=force_refresh)
+    """
+    주가 데이터 다운로드 및 캐싱
 
-    # 2) 가격 다운로드(견고 버전 우선)
+    Rate limit: 5/minute (설정 가능)
+    """
+    logger.info(f"Ingest started: max_tickers={max_tickers}, force_refresh={force_refresh}, days={req.days}")
+
     try:
-        from .data_io import download_ohlc_robust
-        raw, ok = download_ohlc_robust(tickers, period="2y")
-        if raw is None or raw.empty:
-            raise HTTPException(500, "가격 데이터를 가져오지 못했습니다.")
-    except ImportError:
-        raw = download_ohlc(tickers, period="2y")
-        ok = tickers
+        # 1) 티커 로드(캐시/리프레시 지원)
+        tickers = get_tickers(max_count=max_tickers, force_refresh=force_refresh)
+        logger.info(f"Loaded {len(tickers)} tickers")
 
-    # 3) 기간 슬라이싱 & MA20 계산
-    raw = last_n_days(raw, n=req.days)
-    ma20 = compute_ma20(raw)
+        # 2) 가격 다운로드(견고 버전 우선)
+        try:
+            from .data_io import download_ohlc_robust
+            raw, ok = download_ohlc_robust(tickers, period="2y")
+            if raw is None or raw.empty:
+                raise HTTPException(500, "가격 데이터를 가져오지 못했습니다.")
+        except ImportError:
+            logger.warning("download_ohlc_robust not found, using fallback")
+            raw = download_ohlc(tickers, period="2y")
+            ok = tickers
 
-    # 4) 디스크 캐시 저장
-    p = save_ma20_parquet(ma20)
-    save_meta({
-        "tickers": list(ma20.keys()),
-        "file": p,
-        "days": req.days,
-        "ts": time.time(),
-        "ok_count": len(ok)
-    })
+        # 3) 기간 슬라이싱 & MA20 계산
+        raw = last_n_days(raw, n=req.days)
+        ma20 = compute_ma20(raw)
+        logger.info(f"MA20 calculated for {len(ma20)} tickers")
 
-    # 5) 메모리 캐시 준비(행렬/티커/정규화 맵)
-    matrix, T = dict_to_matrix(ma20, target_len=CACHE["target_len"])
-    norm_map = {t: matrix[i, :].tolist() for i, t in enumerate(T)}
-    CACHE.update({"matrix": matrix, "tickers": T, "norm_map": norm_map})
+        # 4) 디스크 캐시 저장
+        p = save_ma20_parquet(ma20)
+        save_meta({
+            "tickers": list(ma20.keys()),
+            "file": p,
+            "days": req.days,
+            "ts": time.time(),
+            "ok_count": len(ok)
+        })
+        logger.info(f"Data saved to {p}")
 
-    return {"tickers_count": len(T), "ok_count": len(ok), "target_len": CACHE["target_len"]}
+        # 5) 메모리 캐시 준비(행렬/티커/정규화 맵)
+        matrix, T = dict_to_matrix(ma20, target_len=CACHE["target_len"])
+        norm_map = {t: matrix[i, :].tolist() for i, t in enumerate(T)}
+
+        with CACHE_LOCK:
+            CACHE.update({"matrix": matrix, "tickers": T, "norm_map": norm_map})
+
+        logger.info(f"Ingest completed: {len(T)} tickers cached")
+        return {"tickers_count": len(T), "ok_count": len(ok), "target_len": CACHE["target_len"]}
+
+    except Exception as e:
+        logger.error(f"Ingest failed: {e}")
+        raise HTTPException(500, f"Ingest 실패: {str(e)}")
 
 @app.post("/refresh_tickers")
 def refresh_tickers(max_tickers: int = Query(5000, ge=10, le=5000)):
     """
     NASDAQ API에서 강제로 티커를 다시 받아와 캐시 파일만 갱신합니다. (가격 다운로드는 아님)
     """
-    syms = get_tickers(max_count=max_tickers, force_refresh=True)
-    return {"refreshed": len(syms)}
+    logger.info(f"Refreshing tickers: max_tickers={max_tickers}")
+    try:
+        syms = get_tickers(max_count=max_tickers, force_refresh=True)
+        logger.info(f"Tickers refreshed: {len(syms)} symbols")
+        return {"refreshed": len(syms)}
+    except Exception as e:
+        logger.error(f"Refresh tickers failed: {e}")
+        raise HTTPException(500, f"티커 갱신 실패: {str(e)}")
 
 @app.post("/similar", response_model=SimilarResponse)
-def similar(req: SketchRequest):
-    # 캐시 없거나 norm_map 미구성 → 디스크에서 불러와 구성
-    if CACHE["matrix"] is None or CACHE.get("norm_map") is None:
-        df = load_ma20_parquet()
-        if df is None or df.empty:
-            raise HTTPException(400, "먼저 /ingest로 데이터 캐시를 준비하세요.")
-        ma20 = {c: df[c].dropna() for c in df.columns}
-        matrix, T = dict_to_matrix(ma20, target_len=req.target_len)
-        norm_map = {t: matrix[i, :].tolist() for i, t in enumerate(T)}
-        CACHE.update({"matrix": matrix, "tickers": T, "target_len": req.target_len, "norm_map": norm_map})
+@limiter.limit(settings.rate_limit_similar)
+def similar(request: Request, req: SketchRequest):
+    """
+    스케치와 유사한 종목 검색
 
-    # 스케치 정규화
-    y = np.array(req.y, dtype=float)
-    sketch_vec = normalize_pipeline(y, target_len=CACHE["target_len"])
+    Rate limit: 20/minute (설정 가능)
+    """
+    logger.info(f"Similar search started: sketch length={len(req.y)}")
 
-    # Top5 랭킹
-    pairs = rank_top_k(sketch_vec, CACHE["matrix"], CACHE["tickers"], k=5)
+    try:
+        # 캐시 없거나 norm_map 미구성 → 디스크에서 불러와 구성
+        if CACHE["matrix"] is None or CACHE.get("norm_map") is None:
+            logger.info("Cache miss, loading from disk...")
+            df = load_ma20_parquet()
+            if df is None or df.empty:
+                raise HTTPException(400, "먼저 /ingest로 데이터 캐시를 준비하세요.")
 
-    # 응답(오버레이용 정규화 시리즈 포함)
-    items = []
-    for i, (t, s) in enumerate(pairs):
-        series_norm = CACHE["norm_map"].get(t)
-        if series_norm is None:
-            idx = CACHE["tickers"].index(t)
-            series_norm = CACHE["matrix"][idx, :].tolist()
-        items.append(SimilarResponseItem(
-            ticker=t, score=s, rank=i+1,
-            series_norm=series_norm,       # 해당 종목 MA20 (정규화)
-            sketch_norm=sketch_vec.tolist()# 스케치 (정규화)
-        ))
-    return SimilarResponse(items=items)
+            ma20 = {c: df[c].dropna() for c in df.columns}
+            matrix, T = dict_to_matrix(ma20, target_len=req.target_len)
+            norm_map = {t: matrix[i, :].tolist() for i, t in enumerate(T)}
+
+            with CACHE_LOCK:
+                CACHE.update({"matrix": matrix, "tickers": T, "target_len": req.target_len, "norm_map": norm_map})
+
+            logger.info(f"Cache loaded: {len(T)} tickers")
+
+        # 스케치 정규화
+        y = np.array(req.y, dtype=float)
+        sketch_vec = normalize_pipeline(y, target_len=CACHE["target_len"])
+        logger.debug(f"Sketch normalized to {len(sketch_vec)} points")
+
+        # NaN 체크 및 제거
+        if np.any(np.isnan(sketch_vec)):
+            logger.warning("NaN detected in sketch_vec, cleaning...")
+            sketch_vec = np.nan_to_num(sketch_vec, nan=0.0)
+
+        # Top5 랭킹
+        pairs = rank_top_k(sketch_vec, CACHE["matrix"], CACHE["tickers"], k=5)
+        logger.info(f"Top 5 matches found: {[t for t, _ in pairs]}")
+
+        # 응답(오버레이용 정규화 시리즈 포함)
+        items = []
+        for i, (t, s) in enumerate(pairs):
+            series_norm = CACHE["norm_map"].get(t)
+            if series_norm is None:
+                idx = CACHE["tickers"].index(t)
+                series_norm = CACHE["matrix"][idx, :].tolist()
+
+            # NaN 제거 (리스트인 경우)
+            if isinstance(series_norm, list):
+                series_norm = [0.0 if (isinstance(x, float) and not np.isfinite(x)) else x for x in series_norm]
+
+            # sketch_norm도 NaN 제거
+            sketch_norm_list = [0.0 if not np.isfinite(x) else float(x) for x in sketch_vec]
+
+            items.append(SimilarResponseItem(
+                ticker=t,
+                score=float(s) if np.isfinite(s) else 0.0,
+                rank=i+1,
+                series_norm=series_norm,       # 해당 종목 MA20 (정규화)
+                sketch_norm=sketch_norm_list   # 스케치 (정규화)
+            ))
+
+        return SimilarResponse(items=items)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Similar search failed: {e}")
+        raise HTTPException(500, f"유사도 검색 실패: {str(e)}")

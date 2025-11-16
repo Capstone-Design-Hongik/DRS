@@ -1,12 +1,21 @@
 # app/tickers.py
 import requests, time, json, re
+import logging
 from pathlib import Path
-from typing import List
+from typing import List, Optional
+
+logger = logging.getLogger(__name__)
 
 DATA_DIR = Path("data")
 DATA_DIR.mkdir(exist_ok=True)
 CACHE_FILE = DATA_DIR / "tickers_nasdaq.json"
-CACHE_TTL_SEC = 24 * 3600  # 캐시 유효기간 1일
+
+# Use config if available, otherwise fallback
+try:
+    from .config import settings
+    CACHE_TTL_SEC = settings.cache_ttl_sec
+except ImportError:
+    CACHE_TTL_SEC = 24 * 3600  # 캐시 유효기간 1일
 
 HEADERS = {"User-Agent": "Mozilla/5.0"}
 NASDAQ_API = "https://api.nasdaq.com/api/screener/stocks?tableonly=true&limit=9999"
@@ -30,34 +39,93 @@ def _looks_like_equity(symbol: str) -> bool:
     return True
 
 def fetch_tickers_from_nasdaq() -> List[str]:
-    r = requests.get(NASDAQ_API, headers=HEADERS, timeout=30)
-    r.raise_for_status()
-    rows = r.json()["data"]["table"]["rows"]
-    raw_symbols = [row["symbol"] for row in rows if row.get("symbol")]
-    raw_symbols = [s for s in raw_symbols if _looks_like_equity(s)]
-    yf_symbols = [_normalize_for_yfinance(s) for s in raw_symbols]
-    uniq = sorted(set(yf_symbols))
-    return uniq
+    """
+    NASDAQ API에서 티커 리스트 가져오기
 
-def load_cached_tickers() -> List[str] | None:
+    Returns:
+        정규화된 티커 심볼 리스트
+
+    Raises:
+        requests.RequestException: API 호출 실패 시
+        ValueError: 응답 파싱 실패 시
+    """
+    try:
+        logger.info(f"Fetching tickers from NASDAQ API: {NASDAQ_API}")
+        r = requests.get(NASDAQ_API, headers=HEADERS, timeout=30)
+        r.raise_for_status()
+
+        data = r.json()
+        if "data" not in data or "table" not in data["data"] or "rows" not in data["data"]["table"]:
+            raise ValueError("Invalid response format from NASDAQ API")
+
+        rows = data["data"]["table"]["rows"]
+        raw_symbols = [row["symbol"] for row in rows if row.get("symbol")]
+        logger.info(f"Fetched {len(raw_symbols)} raw symbols from NASDAQ")
+
+        # 필터링: equity-like symbols만
+        raw_symbols = [s for s in raw_symbols if _looks_like_equity(s)]
+        logger.info(f"Filtered to {len(raw_symbols)} equity symbols")
+
+        # yfinance 포맷으로 정규화
+        yf_symbols = [_normalize_for_yfinance(s) for s in raw_symbols]
+        uniq = sorted(set(yf_symbols))
+
+        logger.info(f"Returning {len(uniq)} unique symbols")
+        return uniq
+
+    except requests.RequestException as e:
+        logger.error(f"Network error while fetching tickers: {e}")
+        raise
+    except (KeyError, ValueError) as e:
+        logger.error(f"Failed to parse NASDAQ API response: {e}")
+        raise ValueError(f"NASDAQ API 응답 파싱 실패: {e}")
+    except Exception as e:
+        logger.error(f"Unexpected error in fetch_tickers_from_nasdaq: {e}")
+        raise
+
+def load_cached_tickers() -> Optional[List[str]]:
+    """캐시 파일에서 티커 로드 (TTL 확인)"""
     if CACHE_FILE.exists():
         mtime = CACHE_FILE.stat().st_mtime
-        if (time.time() - mtime) < CACHE_TTL_SEC:
+        age = time.time() - mtime
+        if age < CACHE_TTL_SEC:
             try:
-                return json.loads(CACHE_FILE.read_text())
-            except Exception:
+                tickers = json.loads(CACHE_FILE.read_text())
+                logger.info(f"Loaded {len(tickers)} tickers from cache (age: {age/3600:.1f}h)")
+                return tickers
+            except Exception as e:
+                logger.warning(f"Failed to load cache file: {e}")
                 return None
+        else:
+            logger.info(f"Cache expired (age: {age/3600:.1f}h > {CACHE_TTL_SEC/3600:.1f}h)")
     return None
 
 def save_cached_tickers(symbols: List[str]) -> None:
-    CACHE_FILE.write_text(json.dumps(symbols, indent=2))
+    """티커 리스트를 캐시 파일에 저장"""
+    try:
+        CACHE_FILE.write_text(json.dumps(symbols, indent=2))
+        logger.info(f"Saved {len(symbols)} tickers to cache: {CACHE_FILE}")
+    except Exception as e:
+        logger.error(f"Failed to save cache file: {e}")
 
 def get_tickers(max_count: int = 5000, force_refresh: bool = False) -> List[str]:
-    """NASDAQ 전체 티커 중 상위 max_count개 반환"""
+    """
+    NASDAQ 전체 티커 중 상위 max_count개 반환
+
+    Args:
+        max_count: 반환할 최대 티커 개수
+        force_refresh: True면 캐시 무시하고 API 호출
+
+    Returns:
+        티커 심볼 리스트
+    """
     if not force_refresh:
         cached = load_cached_tickers()
         if cached:
+            logger.info(f"Using cached tickers (requested: {max_count}, available: {len(cached)})")
             return cached[:max_count]
+
+    logger.info(f"Fetching fresh tickers from NASDAQ (force_refresh={force_refresh})")
     syms = fetch_tickers_from_nasdaq()
     save_cached_tickers(syms)
     return syms[:max_count]

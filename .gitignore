@@ -1,8 +1,8 @@
-echo ".venv/
+.venv/
 __pycache__/
 *.pyc
 *.parquet
 data/
 .DS_Store
 .env
-" > .gitignore
+*.log
