@@ -492,7 +492,3 @@ def test_ingest_endpoint():
 5. 환경 변수 분리
 
 ---
-
-**작성자**: Claude (Anthropic AI)
-**버전**: 1.0
-**최종 수정**: 2025-11-16
