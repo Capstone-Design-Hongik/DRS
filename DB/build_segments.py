@@ -51,9 +51,9 @@ def insert_segments(conn, rows):
     with conn.cursor() as cur:
         execute_batch(cur, """
             INSERT INTO graph_segments
-              (ticker, window_start, window_end, ma_window, length, vec, stdev)
+              (ticker, segment_start, segment_end, ma_type, vector, volatility)
             VALUES
-              (%s, %s, %s, %s, %s, %s, %s)
+              (%s, %s, %s, %s, %s, %s)
         """, rows, page_size=1000)
     conn.commit()
 
@@ -77,36 +77,41 @@ def build_for_ticker(conn, ticker: str, ma_window: int):
         stdev = float(np.std(vec))
         if VOL_MIN <= stdev <= VOL_MAX:
             ws, we = dates[i], dates[i+SEG_DAYS-1]
-            rows.append((ticker, ws, we, ma_window, OUT_LEN, list(map(float, vec)), stdev))
+            ma_type = f"MA{ma_window}"  # "MA20" 또는 "MA30"
+            rows.append((ticker, ws, we, ma_type, list(map(float, vec)), stdev))
 
     # 중복 방지를 원하면 기존 것 삭제
     if CLEAR_BEFORE_INSERT:
         with conn.cursor() as cur:
             cur.execute("""
                 DELETE FROM graph_segments
-                WHERE ticker=%s AND ma_window=%s
-            """, (ticker, ma_window))
+                WHERE ticker=%s AND ma_type=%s
+            """, (ticker, f"MA{ma_window}"))
         conn.commit()
 
     insert_segments(conn, rows)
     print(f"[OK] {ticker} MA{ma_window}: inserted {len(rows)} segments")
 
+def fetch_all_tickers(conn) -> list[str]:
+    """DB에서 모든 티커 조회"""
+    with conn.cursor() as cur:
+        cur.execute("SELECT DISTINCT ticker FROM prices ORDER BY ticker;")
+        rows = cur.fetchall()
+    return [r[0] for r in rows]
+
+
 def main():
     print("[DEBUG] DB:", os.getenv("PG_DB"))
     conn = psycopg2.connect(PG_CONN_STR)
 
-    # tickers_list.txt 있으면 그걸 쓰기
-    p = os.path.join(BASE_DIR, "tickers_list.txt")
-    tickers = TICKERS
-    if os.path.exists(p):
-        with open(p) as f:
-            t = [ln.strip() for ln in f if ln.strip()]
-            if t:
-                tickers = t
+    # DB에서 모든 티커 조회
+    tickers = fetch_all_tickers(conn)
+    print(f"[INFO] Found {len(tickers)} tickers in DB")
+    print(f"[INFO] Processing MA20 only...")
 
+    # MA20만 처리
     for t in tickers:
-        for w in (20, 30):
-            build_for_ticker(conn, t, w)
+        build_for_ticker(conn, t, 20)
 
     conn.close()
     print("Done.")

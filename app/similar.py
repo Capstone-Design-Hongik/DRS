@@ -100,23 +100,35 @@ def ensemble_score(sketch: np.ndarray, series: np.ndarray,
         gamma: Cosine 가중치 (기본 0.1)
 
     Returns:
-        앙상블 스코어 (항상 유효한 float)
+        앙상블 스코어 (항상 유효한 float, 범위: 0~1)
     """
     try:
         # 각 메트릭 계산 (모두 NaN-safe)
         d = dtw_distance(sketch, series)
-        d_norm = -d / len(sketch)  # 거리 → 점수
 
+        # DTW 거리 → 유사도 변환 (0~1 범위)
+        # 방법: 1 / (1 + normalized_distance)
+        # normalized_distance = d / len(sketch)
+        d_normalized = d / len(sketch)
+        dtw_similarity = 1.0 / (1.0 + d_normalized)
+
+        # Pearson과 Cosine은 -1~1 범위 → 0~1로 변환
         c = pearson(sketch, series)
-        s = cosine_sim(sketch, series)
+        c_normalized = (c + 1.0) / 2.0  # -1~1 → 0~1
 
-        # 앙상블 스코어
-        score = alpha * d_norm + beta * c + gamma * s
+        s = cosine_sim(sketch, series)
+        s_normalized = (s + 1.0) / 2.0  # -1~1 → 0~1
+
+        # 앙상블 스코어 (모두 0~1 범위)
+        score = alpha * dtw_similarity + beta * c_normalized + gamma * s_normalized
 
         # 최종 NaN 체크
         if not np.isfinite(score):
             logger.warning(f"Non-finite ensemble score: {score}, using 0.0")
             return 0.0
+
+        # 0~1 범위 보장
+        score = max(0.0, min(1.0, score))
 
         return float(score)
     except Exception as e:

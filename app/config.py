@@ -31,6 +31,18 @@ class Settings(BaseSettings):
     # Log Level
     log_level: str = "INFO"
 
+    # PostgreSQL Settings
+    pg_host: str = "172.17.240.1"
+    pg_port: int = 5433
+    pg_database: str = "drs_db"
+    pg_user: str = "postgres"
+    pg_password: str = ""
+    pg_min_conn: int = 1
+    pg_max_conn: int = 10
+
+    # Data Source Selection
+    data_source: str = "parquet"  # "parquet" or "postgresql"
+
     class Config:
         env_file = ".env"
         case_sensitive = False

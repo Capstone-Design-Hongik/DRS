@@ -20,6 +20,7 @@ from .data_io import (
 )
 from .features import dict_to_matrix, normalize_pipeline
 from .similar import rank_top_k
+from . import db_io
 
 # Logging configuration
 logging.basicConfig(
@@ -62,8 +63,27 @@ CACHE_LOCK = threading.Lock()
 
 @app.on_event("startup")
 def warmup():
-    """서버 시작 시 기존 캐시(parquet)가 있으면 메모리 캐시 생성"""
+    """서버 시작 시 기존 캐시(parquet)가 있으면 메모리 캐시 생성, DB 연결 초기화"""
     logger.info("Starting warmup: loading cached data...")
+
+    # Initialize PostgreSQL connection pool if data_source is postgresql
+    if settings.data_source == "postgresql":
+        try:
+            db_io.init_pool(
+                host=settings.pg_host,
+                port=settings.pg_port,
+                database=settings.pg_database,
+                user=settings.pg_user,
+                password=settings.pg_password,
+                minconn=settings.pg_min_conn,
+                maxconn=settings.pg_max_conn
+            )
+            seg_count = db_io.get_segment_count()
+            logger.info(f"PostgreSQL connection initialized: {seg_count} segments available")
+        except Exception as e:
+            logger.error(f"Failed to initialize PostgreSQL connection: {e}")
+
+    # Load parquet cache for backward compatibility
     try:
         df = load_ma20_parquet()
         if df is not None and not df.empty:
@@ -230,3 +250,70 @@ def similar(request: Request, req: SketchRequest):
     except Exception as e:
         logger.error(f"Similar search failed: {e}")
         raise HTTPException(500, f"유사도 검색 실패: {str(e)}")
+
+@app.post("/similar_db", response_model=SimilarResponse)
+@limiter.limit(settings.rate_limit_similar)
+def similar_db(request: Request, req: SketchRequest):
+    """
+    DB 기반 스케치 유사도 검색 (PostgreSQL graph_segments 사용)
+
+    Rate limit: 20/minute (설정 가능)
+    """
+    logger.info(f"Similar DB search started: sketch length={len(req.y)}")
+
+    try:
+        # PostgreSQL에서 벡터 세그먼트 로드
+        if settings.data_source != "postgresql":
+            raise HTTPException(400, "data_source가 'postgresql'로 설정되어야 합니다.")
+
+        # DB에서 모든 세그먼트 가져오기 (128차원 벡터)
+        vectors, tickers, metadata = db_io.fetch_all_segments(ma_type="MA20")
+
+        if len(vectors) == 0:
+            raise HTTPException(400, "DB에 저장된 벡터 세그먼트가 없습니다.")
+
+        logger.info(f"Loaded {len(vectors)} segments from DB")
+
+        # 스케치를 128차원으로 정규화 (DB 벡터와 동일한 차원)
+        y = np.array(req.y, dtype=float)
+        sketch_vec = normalize_pipeline(y, target_len=128)
+        logger.debug(f"Sketch normalized to 128 dimensions")
+
+        # NaN 체크 및 제거
+        if np.any(np.isnan(sketch_vec)):
+            logger.warning("NaN detected in sketch_vec, cleaning...")
+            sketch_vec = np.nan_to_num(sketch_vec, nan=0.0)
+
+        # Top5 랭킹 (DB 벡터는 이미 정규화되어 있음)
+        pairs = rank_top_k(sketch_vec, vectors, tickers, k=5)
+        logger.info(f"Top 5 matches found: {[t for t, _ in pairs]}")
+
+        # 응답 구성 (메타데이터 포함)
+        items = []
+        for i, (t, s) in enumerate(pairs):
+            # 해당 티커의 첫 번째 매칭 찾기 (같은 티커의 여러 세그먼트 중)
+            ticker_idx = tickers.index(t)
+            series_norm = vectors[ticker_idx, :].tolist()
+            meta = metadata[ticker_idx]
+
+            # NaN 제거
+            if isinstance(series_norm, list):
+                series_norm = [0.0 if (isinstance(x, float) and not np.isfinite(x)) else x for x in series_norm]
+
+            sketch_norm_list = [0.0 if not np.isfinite(x) else float(x) for x in sketch_vec]
+
+            items.append(SimilarResponseItem(
+                ticker=t,
+                score=float(s) if np.isfinite(s) else 0.0,
+                rank=i+1,
+                series_norm=series_norm,       # DB 세그먼트 (128차원)
+                sketch_norm=sketch_norm_list   # 스케치 (128차원)
+            ))
+
+        return SimilarResponse(items=items)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Similar DB search failed: {e}")
+        raise HTTPException(500, f"DB 유사도 검색 실패: {str(e)}")

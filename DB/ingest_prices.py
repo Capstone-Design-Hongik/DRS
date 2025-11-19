@@ -36,6 +36,24 @@ PG_CONN_STR = (
 FALLBACK_TICKERS: List[str] = ["AAPL", "MSFT", "NVDA", "GOOGL", "AMZN"]
 
 
+def read_tickers_json(limit: int = 1000) -> List[str] | None:
+    """DRS/data/tickers_nasdaq.json에서 티커 읽기 (상위 limit개)."""
+    import json
+    # DB/ 폴더에서 ../data/tickers_nasdaq.json 찾기
+    json_path = os.path.join(BASE_DIR, "..", "data", "tickers_nasdaq.json")
+    if os.path.exists(json_path):
+        try:
+            with open(json_path) as f:
+                all_tickers = json.load(f)
+            # 상위 limit개만 반환
+            ts = all_tickers[:limit] if len(all_tickers) > limit else all_tickers
+            return ts if ts else None
+        except Exception as e:
+            print(f"[WARN] Failed to read tickers_nasdaq.json: {e}")
+            return None
+    return None
+
+
 def read_tickers_file() -> List[str] | None:
     """tickers_list.txt가 있으면 그 목록 사용."""
     path = os.path.join(BASE_DIR, "tickers_list.txt")
@@ -81,12 +99,21 @@ def get_nasdaq_tickers(limit: int = 200) -> List[str] | None:
         return None
 
 
-def resolve_tickers(limit: int = 200) -> List[str]:
-    """우선순위: tickers_list.txt > NASDAQ API > FALLBACK."""
+def resolve_tickers(limit: int = 1000) -> List[str]:
+    """우선순위: tickers_nasdaq.json > tickers_list.txt > NASDAQ API > FALLBACK."""
+    # 1. tickers_nasdaq.json 우선
+    ts = read_tickers_json(limit=limit)
+    if ts:
+        print(f"[INFO] Using tickers_nasdaq.json ({len(ts)} symbols)")
+        return ts
+
+    # 2. tickers_list.txt
     ts = read_tickers_file()
     if ts:
         print(f"[INFO] Using tickers_list.txt ({len(ts)} symbols)")
         return ts
+
+    # 3. NASDAQ API
     ts = get_nasdaq_tickers(limit=limit)
     if ts:
         print(f"[INFO] Using NASDAQ API ({len(ts)} symbols)")
@@ -98,6 +125,8 @@ def resolve_tickers(limit: int = 200) -> List[str]:
         except Exception:
             pass
         return ts
+
+    # 4. FALLBACK
     print("[INFO] Using fallback tickers")
     return FALLBACK_TICKERS
 
@@ -251,7 +280,7 @@ def main():
         print("[DEBUG] connected DB:", cur.fetchone()[0])
 
     # NASDAQ에서 자동 수집 (없으면 txt / 그래도 없으면 기본)
-    tickers = resolve_tickers(limit=200)  # 필요 시 2000까지도 가능(나눠서 처리 추천)
+    tickers = resolve_tickers(limit=1000)  # 1000개 티커 사용
     print(f"[INFO] Tickers({len(tickers)}): {', '.join(tickers[:20])}"
           f"{' ...' if len(tickers) > 20 else ''}")
 
@@ -260,7 +289,7 @@ def main():
         print(f"Downloading {t}…")
         df = yf.download(
             t,
-            period="3y",
+            period="18mo",  # 300거래일 (약 1.5년)
             interval="1d",
             auto_adjust=True,
             progress=False,
