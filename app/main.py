@@ -266,13 +266,13 @@ def similar_db(request: Request, req: SketchRequest):
         if settings.data_source != "postgresql":
             raise HTTPException(400, "data_source가 'postgresql'로 설정되어야 합니다.")
 
-        # DB에서 모든 세그먼트 가져오기 (128차원 벡터)
-        vectors, tickers, metadata = db_io.fetch_all_segments(ma_type="MA20")
+        # DB에서 티커당 최신 세그먼트만 가져오기 (훨씬 빠름!)
+        vectors, tickers, metadata = db_io.fetch_all_segments(ma_type="MA20", latest_only=True)
 
         if len(vectors) == 0:
             raise HTTPException(400, "DB에 저장된 벡터 세그먼트가 없습니다.")
 
-        logger.info(f"Loaded {len(vectors)} segments from DB")
+        logger.info(f"Loaded {len(vectors)} latest segments from DB (unique tickers: {len(set(tickers))})")
 
         # 스케치를 128차원으로 정규화 (DB 벡터와 동일한 차원)
         y = np.array(req.y, dtype=float)

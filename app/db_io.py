@@ -50,12 +50,13 @@ def get_connection():
         _pool.putconn(conn)
 
 
-def fetch_all_segments(ma_type: str = "MA20") -> Tuple[np.ndarray, List[str], List[dict]]:
+def fetch_all_segments(ma_type: str = "MA20", latest_only: bool = False) -> Tuple[np.ndarray, List[str], List[dict]]:
     """
     Fetch all pre-computed vector segments from graph_segments table
 
     Args:
         ma_type: Moving average type (default "MA20")
+        latest_only: If True, fetch only the latest segment per ticker (much faster!)
 
     Returns:
         Tuple of:
@@ -63,23 +64,47 @@ def fetch_all_segments(ma_type: str = "MA20") -> Tuple[np.ndarray, List[str], Li
         - tickers: list of ticker symbols for each segment
         - metadata: list of dicts with segment info (id, start_date, end_date, volatility)
     """
-    query = """
-        SELECT
-            id,
-            ticker,
-            segment_start,
-            segment_end,
-            vector,
-            volatility
-        FROM graph_segments
-        WHERE ma_type = %s
-        ORDER BY ticker, segment_start;
-    """
+    if latest_only:
+        # 티커당 최신 세그먼트만 (DISTINCT ON 사용)
+        query = """
+            SELECT DISTINCT ON (ticker)
+                id,
+                ticker,
+                segment_start,
+                segment_end,
+                vector,
+                volatility
+            FROM graph_segments
+            WHERE ma_type = %s
+            ORDER BY ticker, segment_end DESC;
+        """
+    else:
+        # 모든 세그먼트 (기존 방식)
+        query = """
+            SELECT
+                id,
+                ticker,
+                segment_start,
+                segment_end,
+                vector,
+                volatility
+            FROM graph_segments
+            WHERE ma_type = %s
+            ORDER BY ticker, segment_start;
+        """
+
+    logger.info(f"🔍 Executing SQL Query: fetch_all_segments (latest_only={latest_only})")
+    logger.info(f"   {query.strip()}")
+    logger.info(f"   Parameters: ma_type='{ma_type}'")
 
     with get_connection() as conn:
         with conn.cursor() as cur:
+            import time
+            start_time = time.time()
             cur.execute(query, (ma_type,))
             rows = cur.fetchall()
+            elapsed = time.time() - start_time
+            logger.info(f"✅ Query executed in {elapsed:.3f}s, fetched {len(rows)} rows")
 
     if not rows:
         logger.warning(f"No segments found for ma_type={ma_type}")
@@ -140,10 +165,17 @@ def fetch_latest_ma20_for_tickers(tickers: List[str], limit: int = 5) -> dict:
         ORDER BY ticker, segment_end DESC;
     """
 
+    logger.info(f"🔍 Executing SQL Query: fetch_latest_ma20_for_tickers")
+    logger.info(f"   Tickers: {tickers[:limit]} (limit: {limit})")
+
     with get_connection() as conn:
         with conn.cursor() as cur:
+            import time
+            start_time = time.time()
             cur.execute(query, (tickers[:limit],))
             rows = cur.fetchall()
+            elapsed = time.time() - start_time
+            logger.info(f"✅ Query executed in {elapsed:.3f}s, fetched {len(rows)} rows")
 
     result = {}
     for ticker, vector, end_date in rows:
@@ -160,10 +192,16 @@ def get_segment_count() -> int:
     """Get total number of segments in database"""
     query = "SELECT COUNT(*) FROM graph_segments WHERE ma_type = 'MA20';"
 
+    logger.info(f"🔍 Executing SQL Query: get_segment_count")
+
     with get_connection() as conn:
         with conn.cursor() as cur:
+            import time
+            start_time = time.time()
             cur.execute(query)
             count = cur.fetchone()[0]
+            elapsed = time.time() - start_time
+            logger.info(f"✅ Query executed in {elapsed:.3f}s, count={count}")
 
     return count
 

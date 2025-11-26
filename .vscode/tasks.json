@@ -1,0 +1,28 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "🚀 Start DRS Server",
+            "type": "shell",
+            "command": "source .venv/bin/activate && uvicorn app.main:app --host 0.0.0.0 --port 8080 --reload",
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "always",
+                "panel": "new"
+            },
+            "runOptions": {
+                "runOn": "default"
+            }
+        },
+        {
+            "label": "🧪 Test Similar API",
+            "type": "shell",
+            "command": "source .venv/bin/activate && python test_similar.py",
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "always",
+                "panel": "new"
+            }
+        }
+    ]
+}

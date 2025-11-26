@@ -42,31 +42,6 @@ c.addEventListener("pointerleave",()=>drawing=false);
 
 document.getElementById("clear").onclick=()=>{ pts=[]; draw(); };
 
-// ---------- ingest ----------
-document.getElementById("ingest").onclick = async () => {
-  const maxCount = document.getElementById("maxCount").value;
-  const force = document.getElementById("forceRefresh").checked;
-  const btn = document.getElementById("ingest");
-  btn.disabled = true;
-  setStatus(`Ingest 진행중… (티커 ${maxCount}개${force?" 재수집":""})`, false);
-  try{
-    const res = await fetch(`${API}/ingest?max_tickers=${maxCount}&force_refresh=${force}`, {
-      method:"POST",
-      headers:{ "Content-Type":"application/json" },
-      body: JSON.stringify({ days: 365 })
-    });
-    const data = await res.json();
-    if(!res.ok) throw new Error(data.detail || "ingest 실패");
-    setStatus(`Ingest 완료: ${data.tickers_count}개 티커 로드`);
-    toast(`Ingest OK: ${data.tickers_count} tickers`);
-  }catch(e){
-    setStatus(`Ingest 오류: ${e.message}`, true);
-    toast("오류: " + e.message);
-  }finally{
-    btn.disabled = false;
-  }
-};
-
 // ---------- resample & similar ----------
 function resampleY(points, targetLen=200){
   if(points.length<2) return [];
@@ -87,9 +62,10 @@ document.getElementById("search").onclick = async () => {
   const y = resampleY(pts, 200);
   if (y.length < 10) return toast("스케치를 먼저 그려주세요!");
 
-  const r = await fetch(`${API}/similar`, {
+  // PostgreSQL 기반 검색 사용 (/similar_db)
+  const r = await fetch(`${API}/similar_db`, {
     method:"POST", headers:{"Content-Type":"application/json"},
-    body: JSON.stringify({ y, target_len: 200 })
+    body: JSON.stringify({ y, target_len: 128 })
   });
   const data = await r.json();
   if(!r.ok){ toast(data.detail || "similar 실패"); return; }

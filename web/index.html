@@ -62,24 +62,11 @@
 
       <div class="toolbar">
         <button id="clear" class="btn ghost">지우기</button>
-
         <div class="hint">|</div>
-
-        <label class="hint">티커 수</label>
-        <select id="maxCount" class="input">
-          <option value="50">50</option>
-          <option value="200">200</option>
-          <option value="1000">1000</option>
-          <option value="5000">5000</option>
-        </select>
-        <label class="hint"><input type="checkbox" id="forceRefresh" /> 새로 가져오기</label>
-        <button id="ingest" class="btn">데이터 준비(ingest)</button>
-
-        <div class="hint">|</div>
-        <button id="search" class="btn primary">유사도 검색</button>
+        <button id="search" class="btn primary">🔍 유사도 검색 (PostgreSQL)</button>
       </div>
 
-      <div id="status" class="status hint">준비됨</div>
+      <div id="status" class="status hint">✅ PostgreSQL 준비됨 (896 티커, 233K+ 세그먼트)</div>
     </div>
 
     <!-- Results -->
