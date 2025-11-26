@@ -1,0 +1,32 @@
+services:
+  - type: web
+    name: drs-api
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.0
+      - key: DATA_SOURCE
+        value: postgresql
+      - key: API_HOST
+        value: 0.0.0.0
+      - key: API_PORT
+        sync: false
+      - key: LOG_LEVEL
+        value: INFO
+      - key: PG_HOST
+        sync: false
+      - key: PG_PORT
+        sync: false
+      - key: PG_DATABASE
+        sync: false
+      - key: PG_USER
+        sync: false
+      - key: PG_PASSWORD
+        sync: false
+
+databases:
+  - name: drs-postgres
+    databaseName: drs_db
+    user: drs_user

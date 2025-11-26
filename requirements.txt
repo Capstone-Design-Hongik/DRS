@@ -12,3 +12,4 @@ pydantic-settings
 requests
 slowapi
 python-dotenv
+psycopg2-binary
