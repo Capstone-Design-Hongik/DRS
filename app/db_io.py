@@ -28,7 +28,8 @@ def init_pool(host: str, port: int, database: str, user: str, password: str, min
                 port=port,
                 database=database,
                 user=user,
-                password=password
+                password=password,
+                sslmode='require'
             )
             logger.info(f"PostgreSQL connection pool initialized: {database}@{host}:{port}")
         except Exception as e:
