@@ -21,6 +21,7 @@ def init_pool(host: str, port: int, database: str, user: str, password: str, min
     global _pool
     if _pool is None:
         try:
+            # Render PostgreSQL requires SSL but skip certificate verification
             _pool = SimpleConnectionPool(
                 minconn,
                 maxconn,

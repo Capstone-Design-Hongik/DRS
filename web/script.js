@@ -62,10 +62,10 @@ document.getElementById("search").onclick = async () => {
   const y = resampleY(pts, 200);
   if (y.length < 10) return toast("스케치를 먼저 그려주세요!");
 
-  // PostgreSQL 기반 검색 사용 (/similar_db)
-  const r = await fetch(`${API}/similar_db`, {
+  // Parquet 캐시 기반 검색 사용 (/similar) - 빠름!
+  const r = await fetch(`${API}/similar`, {
     method:"POST", headers:{"Content-Type":"application/json"},
-    body: JSON.stringify({ y, target_len: 128 })
+    body: JSON.stringify({ y, out_len: 128 })
   });
   const data = await r.json();
   if(!r.ok){ toast(data.detail || "similar 실패"); return; }

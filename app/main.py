@@ -87,18 +87,48 @@ def warmup():
     try:
         df = load_ma20_parquet()
         if df is not None and not df.empty:
-            ma20 = {c: df[c].dropna() for c in df.columns}
-            matrix, T = dict_to_matrix(ma20, target_len=CACHE["target_len"])
-            norm_map = {t: matrix[i, :].tolist() for i, t in enumerate(T)}
+            # Check if new format (with 'ticker' and 'vector' columns)
+            if 'ticker' in df.columns and 'vector' in df.columns:
+                # New format: pre-computed vectors
+                import numpy as np
+                T = df['ticker'].tolist()
+                # Convert vector column to matrix
+                vectors = []
+                for vec in df['vector']:
+                    if isinstance(vec, np.ndarray):
+                        vectors.append(vec)
+                    elif isinstance(vec, list):
+                        vectors.append(np.array(vec))
+                    else:
+                        # Skip invalid vectors
+                        continue
 
-            with CACHE_LOCK:
-                CACHE.update({"matrix": matrix, "tickers": T, "norm_map": norm_map})
+                if vectors:
+                    matrix = np.vstack(vectors)
+                    norm_map = {t: matrix[i, :].tolist() for i, t in enumerate(T)}
 
-            logger.info(f"Warmup completed: {len(T)} tickers loaded into cache")
+                    with CACHE_LOCK:
+                        CACHE.update({"matrix": matrix, "tickers": T, "norm_map": norm_map})
+
+                    logger.info(f"Warmup completed: {len(T)} tickers loaded from pre-computed vectors")
+                else:
+                    logger.warning("No valid vectors found in parquet cache")
+            else:
+                # Old format: MA20 time series
+                ma20 = {c: df[c].dropna() for c in df.columns}
+                matrix, T = dict_to_matrix(ma20, target_len=CACHE["target_len"])
+                norm_map = {t: matrix[i, :].tolist() for i, t in enumerate(T)}
+
+                with CACHE_LOCK:
+                    CACHE.update({"matrix": matrix, "tickers": T, "norm_map": norm_map})
+
+                logger.info(f"Warmup completed: {len(T)} tickers loaded into cache")
         else:
             logger.info("No cached data found. Please run /ingest first.")
     except Exception as e:
         logger.error(f"Warmup failed: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
 
 @app.get("/health")
 def health():

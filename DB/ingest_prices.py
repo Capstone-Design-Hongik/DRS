@@ -280,13 +280,29 @@ def main():
         print("[DEBUG] connected DB:", cur.fetchone()[0])
 
     # NASDAQ에서 자동 수집 (없으면 txt / 그래도 없으면 기본)
-    tickers = resolve_tickers(limit=1000)  # 1000개 티커 사용
-    print(f"[INFO] Tickers({len(tickers)}): {', '.join(tickers[:20])}"
+    all_tickers = resolve_tickers(limit=5364)  # 5364개 티커 사용 (필터링된 보통주)
+    print(f"[INFO] Total tickers from file: {len(all_tickers)}")
+
+    # DB에 이미 있는 ticker 조회
+    with conn.cursor() as cur:
+        cur.execute("SELECT DISTINCT ticker FROM prices;")
+        existing_tickers = {row[0] for row in cur.fetchall()}
+    print(f"[INFO] Already in DB: {len(existing_tickers)} tickers")
+
+    # 새로운 ticker만 필터링
+    tickers = [t for t in all_tickers if t not in existing_tickers]
+    print(f"[INFO] New tickers to add: {len(tickers)}")
+    print(f"[INFO] First 20: {', '.join(tickers[:20])}"
           f"{' ...' if len(tickers) > 20 else ''}")
 
+    if not tickers:
+        print("[INFO] No new tickers to add. All tickers already in DB.")
+        conn.close()
+        return
+
     # 다운로드 & 업서트
-    for t in tickers:
-        print(f"Downloading {t}…")
+    for idx, t in enumerate(tickers, 1):
+        print(f"[{idx}/{len(tickers)}] Downloading {t}…")
         df = yf.download(
             t,
             period="18mo",  # 300거래일 (약 1.5년)
