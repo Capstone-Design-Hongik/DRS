@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     cors_origins: str = '["http://localhost:8080", "http://127.0.0.1:8080"]'
 
     # Data Settings
-    target_len: int = 200
+    target_len: int = 128
     cache_ttl_sec: int = 86400  # 24 hours
     max_tickers: int = 5000
 

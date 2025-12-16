@@ -10,6 +10,7 @@ class SketchRequest(BaseModel):
 
 class SimilarResponseItem(BaseModel):
     ticker: str
+    name: str = ""  # 회사 이름
     score: float
     rank: int
     series_norm: List[float]

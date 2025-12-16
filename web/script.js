@@ -42,8 +42,27 @@ c.addEventListener("pointerleave",()=>drawing=false);
 
 document.getElementById("clear").onclick=()=>{ pts=[]; draw(); };
 
+// ---------- Load stats on page load ----------
+async function loadStats() {
+  try {
+    const r = await fetch(`${API}/stats`);
+    const data = await r.json();
+    if (r.ok) {
+      const tickerText = data.ticker_count > 0 ? `${data.ticker_count.toLocaleString()} 티커` : "데이터 없음";
+      const segmentText = data.segment_count > 0 ? `, ${(data.segment_count / 1000).toFixed(0)}K+ 세그먼트` : "";
+      const sourceText = data.data_source === "postgresql" ? "PostgreSQL" : "Parquet 캐시";
+      setStatus(`${sourceText} 준비됨 (${tickerText}${segmentText})`, true);
+    } else {
+      setStatus("데이터 로드 실패", false);
+    }
+  } catch(e) {
+    setStatus("서버 연결 실패", false);
+  }
+}
+loadStats();
+
 // ---------- resample & similar ----------
-function resampleY(points, targetLen=200){
+function resampleY(points, targetLen=128){
   if(points.length<2) return [];
   const xs = points.map((p,i)=>i/(points.length-1));
   const ys = points.map(p => 1 - (p.y / c.height));
@@ -59,41 +78,62 @@ function resampleY(points, targetLen=200){
 }
 
 document.getElementById("search").onclick = async () => {
-  const y = resampleY(pts, 200);
+  const y = resampleY(pts, 128);
   if (y.length < 10) return toast("스케치를 먼저 그려주세요!");
 
-  // Parquet 캐시 기반 검색 사용 (/similar) - 빠름!
-  const r = await fetch(`${API}/similar`, {
-    method:"POST", headers:{"Content-Type":"application/json"},
-    body: JSON.stringify({ y, out_len: 128 })
-  });
-  const data = await r.json();
-  if(!r.ok){ toast(data.detail || "similar 실패"); return; }
+  // 로딩 표시
+  setStatus("유사도 계산중...", false);
+  const searchBtn = document.getElementById("search");
+  searchBtn.disabled = true;
 
-  const div = document.getElementById("result");
-  if (!data.items || !data.items.length){
-    div.innerHTML = "<div class='hint'>결과가 없습니다.</div>";
-    return;
-  }
+  try {
+    // Parquet 캐시 기반 검색 사용 (/similar) - 빠름!
+    const r = await fetch(`${API}/similar`, {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({ y, out_len: 128 })
+    });
+    const data = await r.json();
+    if(!r.ok){
+      toast(data.detail || "similar 실패");
+      loadStats(); // 상태 복구
+      searchBtn.disabled = false;
+      return;
+    }
 
-  // 렌더
-  div.innerHTML = data.items.map(it => `
-    <div class="card">
-      <div class="row">
-        <div class="ticker">${it.rank}. ${it.ticker}</div>
-        <div class="chip">score: ${Number(it.score).toFixed(4)}</div>
+    const div = document.getElementById("result");
+    if (!data.items || !data.items.length){
+      div.innerHTML = "<div class='hint'>결과가 없습니다.</div>";
+      loadStats(); // 상태 복구
+      searchBtn.disabled = false;
+      return;
+    }
+
+    // 렌더
+    div.innerHTML = data.items.map(it => `
+      <div class="card">
+        <div class="row">
+          <div class="ticker">${it.rank}. ${it.name} (${it.ticker})</div>
+          <div class="chip">score: ${Number(it.score).toFixed(4)}</div>
+        </div>
+        <canvas class="mini" width="420" height="140" id="cv_${it.rank}"></canvas>
+        <div class="hint">검정: 스케치 / 회색: MA20(정규화)</div>
       </div>
-      <canvas class="mini" width="420" height="140" id="cv_${it.rank}"></canvas>
-      <div class="hint">검정: 스케치 / 회색: MA20(정규화)</div>
-    </div>
-  `).join("");
+    `).join("");
 
-  // 캔버스 오버레이
-  data.items.forEach(it => {
-    const cv = document.getElementById(`cv_${it.rank}`);
-    drawOverlay(cv, it.sketch_norm, it.series_norm);
-  });
-  toast(`총 ${data.items.length}개 결과`);
+    // 캔버스 오버레이
+    data.items.forEach(it => {
+      const cv = document.getElementById(`cv_${it.rank}`);
+      drawOverlay(cv, it.sketch_norm, it.series_norm);
+    });
+
+    toast(`총 ${data.items.length}개 결과`);
+    loadStats(); // 상태 복구
+    searchBtn.disabled = false;
+  } catch(e) {
+    toast("검색 중 오류 발생");
+    loadStats(); // 상태 복구
+    searchBtn.disabled = false;
+  }
 };
 
 // ---------- overlay drawing ----------

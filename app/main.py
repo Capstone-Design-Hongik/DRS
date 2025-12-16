@@ -12,7 +12,7 @@ from pathlib import Path
 
 from .config import settings
 from .models import IngestRequest, SketchRequest, SimilarResponse, SimilarResponseItem
-from .tickers import get_tickers
+from .tickers import get_tickers, get_ticker_info
 from .data_io import (
     download_ohlc,  # fallback
     last_n_days, compute_ma20,
@@ -58,6 +58,7 @@ CACHE = {
     "tickers": None,
     "target_len": settings.target_len,
     "norm_map": None,   # ticker -> normalized vector(list)
+    "ticker_info": None,  # ticker -> company name mapping
 }
 CACHE_LOCK = threading.Lock()
 
@@ -65,6 +66,16 @@ CACHE_LOCK = threading.Lock()
 def warmup():
     """서버 시작 시 기존 캐시(parquet)가 있으면 메모리 캐시 생성, DB 연결 초기화"""
     logger.info("Starting warmup: loading cached data...")
+
+    # Load ticker info (symbol -> company name mapping)
+    try:
+        ticker_info = get_ticker_info()
+        with CACHE_LOCK:
+            CACHE["ticker_info"] = ticker_info
+        logger.info(f"Loaded ticker info for {len(ticker_info)} companies")
+    except Exception as e:
+        logger.warning(f"Failed to load ticker info: {e}")
+        CACHE["ticker_info"] = {}
 
     # Initialize PostgreSQL connection pool if data_source is postgresql
     if settings.data_source == "postgresql":
@@ -133,6 +144,26 @@ def warmup():
 @app.get("/health")
 def health():
     return {"ok": True}
+
+@app.get("/stats")
+def stats():
+    """현재 캐시된 티커 개수와 데이터 소스 정보 반환"""
+    ticker_count = len(CACHE.get("tickers", [])) if CACHE.get("tickers") else 0
+
+    # PostgreSQL 세그먼트 개수 (data_source가 postgresql인 경우)
+    segment_count = 0
+    if settings.data_source == "postgresql":
+        try:
+            segment_count = db_io.get_segment_count()
+        except:
+            pass
+
+    return {
+        "ticker_count": ticker_count,
+        "segment_count": segment_count,
+        "data_source": settings.data_source,
+        "target_len": CACHE["target_len"]
+    }
 
 @app.post("/ingest")
 @limiter.limit(settings.rate_limit_ingest)
@@ -265,8 +296,12 @@ def similar(request: Request, req: SketchRequest):
             # sketch_norm도 NaN 제거
             sketch_norm_list = [0.0 if not np.isfinite(x) else float(x) for x in sketch_vec]
 
+            # 회사 이름 가져오기
+            company_name = CACHE.get("ticker_info", {}).get(t, t)
+
             items.append(SimilarResponseItem(
                 ticker=t,
+                name=company_name,
                 score=float(s) if np.isfinite(s) else 0.0,
                 rank=i+1,
                 series_norm=series_norm,       # 해당 종목 MA20 (정규화)
@@ -332,8 +367,12 @@ def similar_db(request: Request, req: SketchRequest):
 
             sketch_norm_list = [0.0 if not np.isfinite(x) else float(x) for x in sketch_vec]
 
+            # 회사 이름 가져오기
+            company_name = CACHE.get("ticker_info", {}).get(t, t)
+
             items.append(SimilarResponseItem(
                 ticker=t,
+                name=company_name,
                 score=float(s) if np.isfinite(s) else 0.0,
                 rank=i+1,
                 series_norm=series_norm,       # DB 세그먼트 (128차원)
