@@ -32,6 +32,7 @@ PG_CONN_STR = (
     f"password={os.getenv('PG_PASSWORD')}"
 )
 
+
 # ===== 기본 티커(백업용) =====
 FALLBACK_TICKERS: List[str] = ["AAPL", "MSFT", "NVDA", "GOOGL", "AMZN"]
 

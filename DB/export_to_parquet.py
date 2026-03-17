@@ -7,6 +7,7 @@ import psycopg2
 import pandas as pd
 import numpy as np
 from dotenv import load_dotenv
+import ast
 
 # .env 로드
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -29,13 +30,13 @@ print("[INFO] Fetching latest MA20 segments from Render DB...")
 query = """
     SELECT DISTINCT ON (ticker)
         ticker,
-        segment_start,
-        segment_end,
-        vector,
-        volatility
+        window_start,
+        window_end,
+        vec,
+        stdev
     FROM graph_segments
-    WHERE ma_type = 'MA20'
-    ORDER BY ticker, segment_end DESC;
+    WHERE ma_window = 20
+    ORDER BY ticker, window_end DESC;
 """
 
 df = pd.read_sql_query(query, conn)
@@ -44,15 +45,43 @@ conn.close()
 print(f"[INFO] Fetched {len(df)} segments")
 
 # vector 컬럼을 numpy array로 변환 (리스트로 저장되어 있을 수 있음)
+"""
 if len(df) > 0:
     print("[INFO] Converting vector column...")
     # vector가 문자열이나 리스트로 저장되어 있을 수 있으므로 변환
-    if isinstance(df['vector'].iloc[0], str):
+    if isinstance(df['vec'].iloc[0], str):
         # PostgreSQL에서 array로 저장된 경우 문자열로 나올 수 있음
         import ast
-        df['vector'] = df['vector'].apply(lambda x: np.array(ast.literal_eval(x)) if isinstance(x, str) else np.array(x))
-    elif not isinstance(df['vector'].iloc[0], np.ndarray):
-        df['vector'] = df['vector'].apply(lambda x: np.array(x))
+        df['vec'] = df['vec'].apply(lambda x: np.array(ast.literal_eval(x)) if isinstance(x, str) else np.array(x))
+    elif not isinstance(df['vec'].iloc[0], np.ndarray):
+        df['vec'] = df['vec'].apply(lambda x: np.array(x))
+"""
+if len(df) > 0:
+    print("[INFO] Converting vector column...")
+
+    def convert_vec(x):
+        # 문자열 형태 "[0.1, 0.2, ...]" 인 경우
+        if isinstance(x, str):
+            return np.array(ast.literal_eval(x), dtype=float)
+
+        # 이미 numpy array인 경우
+        if isinstance(x, np.ndarray):
+            return x.astype(float)
+
+        # list/tuple/기타 iterable인 경우
+        return np.array(x, dtype=float)
+
+    df["vec"] = df["vec"].apply(convert_vec)
+
+df = df.rename(columns={
+    "window_start": "segment_start",
+    "window_end": "segment_end",
+    "vec": "vector",
+    "stdev": "volatility",
+})
+
+# 최종 컬럼 순서 정리
+df = df[["ticker", "segment_start", "segment_end", "vector", "volatility"]]
 
 # Parquet로 저장
 output_path = os.path.join(BASE_DIR, "..", "data", "ma20.parquet")

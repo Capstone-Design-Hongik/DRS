@@ -51,7 +51,7 @@ def insert_segments(conn, rows):
     with conn.cursor() as cur:
         execute_batch(cur, """
             INSERT INTO graph_segments
-              (ticker, segment_start, segment_end, ma_type, vector, volatility)
+              (ticker, window_start, window_end, ma_window, vec, stdev)
             VALUES
               (%s, %s, %s, %s, %s, %s)
         """, rows, page_size=1000)
@@ -77,16 +77,16 @@ def build_for_ticker(conn, ticker: str, ma_window: int):
         stdev = float(np.std(vec))
         if VOL_MIN <= stdev <= VOL_MAX:
             ws, we = dates[i], dates[i+SEG_DAYS-1]
-            ma_type = f"MA{ma_window}"  # "MA20" 또는 "MA30"
-            rows.append((ticker, ws, we, ma_type, list(map(float, vec)), stdev))
+            # ma_type = f"MA{ma_window}"  # "MA20" 또는 "MA30"
+            rows.append((ticker, ws, we, ma_window, list(map(float, vec)), stdev))
 
     # 중복 방지를 원하면 기존 것 삭제
     if CLEAR_BEFORE_INSERT:
         with conn.cursor() as cur:
             cur.execute("""
                 DELETE FROM graph_segments
-                WHERE ticker=%s AND ma_type=%s
-            """, (ticker, f"MA{ma_window}"))
+                WHERE ticker=%s AND ma_window=%s
+            """, (ticker, ma_window))
         conn.commit()
 
     insert_segments(conn, rows)
