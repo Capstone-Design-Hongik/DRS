@@ -140,6 +140,88 @@ def fetch_all_segments(ma_type: str = "MA20", latest_only: bool = False) -> Tupl
 
     logger.info(f"Loaded {len(vectors)} segments from database (ma_type={ma_type})")
 
+def fetch_top_k_segments(sketch_vec: np.ndarray, ma_type: str = "MA20", limit: int = 100) -> Tuple[np.ndarray, List[str], List[dict]]:
+    """
+    Fetch the most similar segments using pgvector's cosine distance operator (<=>).
+    
+    Args:
+        sketch_vec: user's sketch vector (128-dim)
+        ma_type: moving average type (default "MA20")
+        limit: number of segments to return (default 100)
+    
+    Returns:
+        Tuple of:
+        - vectors: numpy array of shape (N, 128) - retrieved segment vectors
+        - tickers: list of ticker symbols for each segment
+        - metadata: list of dicts with segment info
+    """
+    # Using pgvector <=> operator for cosine distance. 
+    # Because vector column is vector(128), we cast input sequence to vector.
+    query = """
+        SELECT
+            id,
+            ticker,
+            segment_start,
+            segment_end,
+            vector,
+            volatility,
+            (vector <=> %s::vector) AS distance
+        FROM graph_segments
+        WHERE ma_type = %s
+        ORDER BY distance ASC
+        LIMIT %s;
+    """
+
+    # Ensure sketch is native float list for psycopg2
+    sketch_list = sketch_vec.tolist()
+    # Format vector parameter for pgvector: '[1.0, 2.0, ...]'
+    sketch_str = '[' + ','.join(map(str, sketch_list)) + ']'
+
+    logger.info(f"🔍 Executing SQL Query: pgvector top {limit} segments")
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            import time
+            start_time = time.time()
+            cur.execute(query, (sketch_str, ma_type, limit))
+            rows = cur.fetchall()
+            elapsed = time.time() - start_time
+            logger.info(f"✅ Query executed in {elapsed:.3f}s, fetched {len(rows)} rows")
+
+    if not rows:
+        logger.warning(f"No segments found for ma_type={ma_type}")
+        return np.array([]), [], []
+
+    vectors = []
+    tickers = []
+    metadata = []
+
+    for row in rows:
+        seg_id, ticker, start_date, end_date, vector, volatility, distance = row
+
+        # Convert PostgreSQL vector (string representation returned by pgvector) to numpy array
+        if isinstance(vector, list):
+            vec = np.array(vector, dtype=np.float32)
+        elif isinstance(vector, str):
+            # pgvector returns string '[1.0,2.0,...]' 
+            clean_str = vector.replace('[', '').replace(']', '')
+            vec = np.array([float(x) for x in clean_str.split(',')], dtype=np.float32)
+        else:
+            vec = np.array(vector, dtype=np.float32)
+
+        vectors.append(vec)
+        tickers.append(ticker)
+        metadata.append({
+            'id': seg_id,
+            'ticker': ticker,
+            'start_date': start_date,
+            'end_date': end_date,
+            'volatility': volatility,
+            'pgvector_distance': float(distance)
+        })
+
+    vectors_array = np.vstack(vectors)  # Shape: (N, 128)
+
     return vectors_array, tickers, metadata
 
 

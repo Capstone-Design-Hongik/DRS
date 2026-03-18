@@ -1,5 +1,8 @@
 -- DRS 프로젝트 데이터베이스 테이블 생성
 
+-- pgvector 확장 추가
+CREATE EXTENSION IF NOT EXISTS vector;
+
 -- 1. stocks 테이블 (티커 메타데이터)
 CREATE TABLE IF NOT EXISTS stocks (
     ticker VARCHAR(20) PRIMARY KEY,
@@ -33,7 +36,7 @@ CREATE TABLE IF NOT EXISTS graph_segments (
     ma_type VARCHAR(10) NOT NULL,  -- 'MA20' or 'MA30'
     segment_start DATE NOT NULL,
     segment_end DATE,
-    vector REAL[],  -- 128차원 벡터
+    vector vector(128),  -- pgvector 128차원 벡터
     volatility REAL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (ticker) REFERENCES stocks(ticker) ON DELETE CASCADE
@@ -44,6 +47,9 @@ CREATE INDEX IF NOT EXISTS idx_prices_ticker ON prices(ticker);
 CREATE INDEX IF NOT EXISTS idx_prices_date ON prices(trade_date);
 CREATE INDEX IF NOT EXISTS idx_segments_ticker ON graph_segments(ticker);
 CREATE INDEX IF NOT EXISTS idx_segments_ma_type ON graph_segments(ma_type);
+
+-- 백터 검색을 위한 HNSW 인덱스 생성
+CREATE INDEX IF NOT EXISTS idx_segments_vector_cosine ON graph_segments USING hnsw (vector vector_cosine_ops);
 
 -- 완료 메시지
 SELECT 'Tables created successfully!' AS status;

@@ -331,15 +331,7 @@ def similar_db(request: Request, req: SketchRequest):
         if settings.data_source != "postgresql":
             raise HTTPException(400, "data_source가 'postgresql'로 설정되어야 합니다.")
 
-        # DB에서 티커당 최신 세그먼트만 가져오기 (훨씬 빠름!)
-        vectors, tickers, metadata = db_io.fetch_all_segments(ma_type="MA20", latest_only=True)
-
-        if len(vectors) == 0:
-            raise HTTPException(400, "DB에 저장된 벡터 세그먼트가 없습니다.")
-
-        logger.info(f"Loaded {len(vectors)} latest segments from DB (unique tickers: {len(set(tickers))})")
-
-        # 스케치를 128차원으로 정규화 (DB 벡터와 동일한 차원)
+        # 스케치를 먼저 128차원으로 정규화
         y = np.array(req.y, dtype=float)
         sketch_vec = normalize_pipeline(y, target_len=128)
         logger.debug(f"Sketch normalized to 128 dimensions")
@@ -349,7 +341,15 @@ def similar_db(request: Request, req: SketchRequest):
             logger.warning("NaN detected in sketch_vec, cleaning...")
             sketch_vec = np.nan_to_num(sketch_vec, nan=0.0)
 
-        # Top5 랭킹 (DB 벡터는 이미 정규화되어 있음)
+        # pgvector를 사용하여 DB에서 상위 100개 세그먼트를 가져옴 (1차 필터링)
+        vectors, tickers, metadata = db_io.fetch_top_k_segments(sketch_vec, ma_type="MA20", limit=100)
+
+        if len(vectors) == 0:
+            raise HTTPException(400, "DB에 저장된 벡터 세그먼트가 없습니다.")
+
+        logger.info(f"Loaded top {len(vectors)} segments from DB using pgvector")
+
+        # 가져온 후보군 100개에 대해서만 정밀 평가(DTW, Pearson 등) 적용하여 Top 5 랭킹
         pairs = rank_top_k(sketch_vec, vectors, tickers, k=5)
         logger.info(f"Top 5 matches found: {[t for t, _ in pairs]}")
 
