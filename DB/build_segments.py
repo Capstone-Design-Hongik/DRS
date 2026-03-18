@@ -99,6 +99,13 @@ def fetch_all_tickers(conn) -> list[str]:
         rows = cur.fetchall()
     return [r[0] for r in rows]
 
+def fetch_processed_tickers(conn, ma_window: int) -> set[str]:
+    """이미 처리된 티커 조회"""
+    with conn.cursor() as cur:
+        cur.execute("SELECT DISTINCT ticker FROM graph_segments WHERE ma_window=%s;", (ma_window,))
+        rows = cur.fetchall()
+    return set(r[0] for r in rows)
+
 
 def main():
     print("[DEBUG] DB:", os.getenv("PG_DB"))
@@ -106,12 +113,34 @@ def main():
 
     # DB에서 모든 티커 조회
     tickers = fetch_all_tickers(conn)
-    print(f"[INFO] Found {len(tickers)} tickers in DB")
-    print(f"[INFO] Processing MA20 only...")
+    processed = fetch_processed_tickers(conn, 20)
+    
+    tickers_to_process = [t for t in tickers if t not in processed]
+    
+    print(f"[INFO] Found {len(tickers)} tickers in DB. {len(processed)} already processed.")
+    print(f"[INFO] Processing {len(tickers_to_process)} remaining MA20 tickers...")
 
     # MA20만 처리
-    for t in tickers:
-        build_for_ticker(conn, t, 20)
+    for t in tickers_to_process:
+        try:
+            build_for_ticker(conn, t, 20)
+        except psycopg2.OperationalError as e:
+            print(f"\\n[ERROR] Connection lost for {t}: {e}\\nReconnecting...")
+            try:
+                conn = psycopg2.connect(PG_CONN_STR)
+                build_for_ticker(conn, t, 20)
+            except Exception as e2:
+                print(f"[ERROR] Failed to process {t} even after reconnect: {e2}")
+                try: 
+                    conn.rollback()
+                except: 
+                    pass
+        except Exception as e:
+            print(f"[ERROR] Failed to process {t}: {e}")
+            try: 
+                conn.rollback()
+            except: 
+                pass
 
     conn.close()
     print("Done.")
