@@ -13,8 +13,8 @@ from app.config import settings
 BASE_URL = "http://localhost:8080"
 TARGET_TICKER = "AAPL"  # 애플 데이터로 테스트
 
-def get_aapl_sketch():
-    """DB 또는 캐시에서 AAPL 스케치(벡터)를 가져옵니다."""
+def get_reference_sketch(ticker):
+    """DB 또는 캐시에서 해당 종목 스케치(벡터)를 가져옵니다."""
     print(f"📦 현재 설정된 데이터 소스(data_source): {settings.data_source}")
     
     # 1. PostgreSQL DB 사용 시
@@ -29,11 +29,11 @@ def get_aapl_sketch():
                 user=settings.pg_user,
                 password=settings.pg_password,
             )
-            data_dict = fetch_latest_ma20_for_tickers([TARGET_TICKER], limit=1)
+            data_dict = fetch_latest_ma20_for_tickers([ticker], limit=1)
             close_pool()
             
-            if TARGET_TICKER in data_dict:
-                return data_dict[TARGET_TICKER].tolist()
+            if ticker in data_dict:
+                return data_dict[ticker].tolist()
         except Exception as e:
             print(f"⚠️ PostgreSQL 연결/조회 실패: {e}")
             print("   아직 DB 환경 세팅이 완료되지 않은 것 같습니다. Parquet 방식으로 우회 시도합니다.")
@@ -46,16 +46,16 @@ def get_aapl_sketch():
         if df is not None and not df.empty:
             if 'ticker' in df.columns and 'vector' in df.columns:
                 # 새 포맷
-                row = df[df['ticker'] == TARGET_TICKER]
+                row = df[df['ticker'] == ticker]
                 if not row.empty:
                     vec = row.iloc[0]['vector']
                     if isinstance(vec, list): return vec
                     if isinstance(vec, np.ndarray): return vec.tolist()
             else:
                 # 옛날 포맷
-                if TARGET_TICKER in df.columns:
-                    # 마지막 128일 데이터 (target_len)
-                    series = df[TARGET_TICKER].dropna().tail(settings.target_len)
+                if ticker in df.columns:
+                    # 서버와 동일하게 전체 시계열 사용해야 매트릭스와 동일하게 리샘플링됨
+                    series = df[ticker].dropna()
                     from app.features import normalize_pipeline
                     return normalize_pipeline(series.values, target_len=settings.target_len).tolist()
     except Exception as e:
@@ -65,10 +65,10 @@ def get_aapl_sketch():
     print("   DB와 캐시에 데이터가 없으므로 웹(야후 파이낸스)에서 실시간으로 가져옵니다...")
     from app.data_io import download_ohlc, last_n_days, compute_ma20
     from app.features import normalize_pipeline
-    raw = download_ohlc([TARGET_TICKER], period="2y")
+    raw = download_ohlc([ticker], period="2y")
     raw = last_n_days(raw, n=settings.target_len)
     ma20 = compute_ma20(raw)
-    series = ma20[TARGET_TICKER].dropna().values
+    series = ma20[ticker].dropna().values
     return normalize_pipeline(series, target_len=settings.target_len).tolist()
 
 def main():
@@ -85,7 +85,7 @@ def main():
         return
 
     # 2. 데이터 가져오기
-    sketch_vec = get_aapl_sketch()
+    sketch_vec = get_reference_sketch(TARGET_TICKER)
     if not sketch_vec:
         print(f"❌ {TARGET_TICKER} 데이터를 어디에서도 구할 수 없었습니다.")
         return
@@ -104,7 +104,7 @@ def main():
     print(f"   (서버 설정에 맞추어 {api_endpoint} 엔드포인트 사용)")
 
     try:
-        response = requests.post(f"{BASE_URL}{api_endpoint}", json=payload, timeout=30)
+        response = requests.post(f"{BASE_URL}{api_endpoint}", json=payload, timeout=120)
         response.raise_for_status()
         result = response.json()
         
