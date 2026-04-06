@@ -12,8 +12,8 @@ except ImportError:
     def tqdm(iterable, *args, **kwargs):
         return iterable
 
-# 프로젝트 루트 폴더를 경로에 추가 (app 모듈을 불러오기 위함)
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+# 프로젝트 루트 폴더를 경로에 추가 (tmp 폴더 안에 있으므로 parent directory로 추가)
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.config import settings
 # 이전에 만든 스크립트의 편의 함수(get_aapl_sketch)를 재활용하여 진짜 AAPL 데이터를 가져옵니다.

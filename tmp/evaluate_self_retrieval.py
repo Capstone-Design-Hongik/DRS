@@ -5,8 +5,8 @@ import sys
 import requests
 import numpy as np
 
-# 프로젝트 루트 폴더를 경로에 추가 (app 모듈을 불러오기 위함)
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+# 프로젝트 루트 폴더를 경로에 추가 (tmp 폴더 안에 있으므로 parent directory로 추가)
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.config import settings
 
@@ -38,7 +38,7 @@ def get_aapl_sketch():
             print(f"⚠️ PostgreSQL 연결/조회 실패: {e}")
             print("   아직 DB 환경 세팅이 완료되지 않은 것 같습니다. Parquet 방식으로 우회 시도합니다.")
 
-    # 2. Parquet 캐시 파일 혹은 DB 실패 시 우회 (현재 개발자님 환경)
+    # 2. Parquet 캐시 파일 혹은 DB 실패 시 우회
     try:
         from app.data_io import load_ma20_parquet
         print("   로컬 파일(Parquet DB)에서 데이터를 스캔하여 가져옵니다...")
