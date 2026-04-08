@@ -13,7 +13,7 @@ class PatternAnalysis(BaseModel):
 
 def analyze_sketch_pattern(sketch_y: List[float]) -> dict:
     """
-    Gemini API를 사용하여 스케치 y좌표를 분석하고 주식 패턴 이름과 Fun Fact를 반환합니다.
+    Gemini API를 사용하여 스케치 y좌표를 분석하고 주식 패턴 이름과 Fun Fact를 반환
     """
     if not settings.gemini_api_key:
         logger.warning("Gemini API key is missing. Skipping AI analysis.")
