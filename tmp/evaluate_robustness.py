@@ -11,8 +11,8 @@ except ImportError:
     def tqdm(iterable, *args, **kwargs):
         return iterable
 
-# 프로젝트 루트 폴더를 경로에 추가
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+# 프로젝트 루트 폴더를 경로에 추가 (tmp 폴더 안에 있으므로 parent directory로 추가)
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.config import settings
 from evaluate_self_retrieval import get_reference_sketch

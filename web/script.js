@@ -1,7 +1,5 @@
 // API URL: 환경에 따라 자동 설정
-const API = window.location.origin.includes('localhost') || window.location.origin.includes('127.0.0.1')
-  ? "http://localhost:8080"
-  : window.location.origin;
+const API = window.location.origin;
 const c = document.getElementById("c");
 const ctx = c.getContext("2d");
 let drawing=false, pts=[];
@@ -134,6 +132,33 @@ document.getElementById("search").onclick = async () => {
     loadStats(); // 상태 복구
     searchBtn.disabled = false;
   }
+
+  // Alpha Feature: AI Pattern Analysis (비동기 병렬 실행)
+  const aiPanel = document.getElementById("ai-analysis-panel");
+  const aiPatternName = document.getElementById("ai-pattern-name");
+  const aiFunFact = document.getElementById("ai-fun-fact");
+  
+  aiPanel.style.display = "block";
+  aiPatternName.textContent = "분석 중...";
+  aiFunFact.textContent = "Gemini AI가 패턴을 식별하고 있습니다. 잠시만 기다려주세요.";
+
+  fetch(`${API}/analyze_pattern`, {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({ y, target_len: 128 })
+  }).then(res => res.json()).then(data => {
+    // 백엔드 에러 등의 응답이 올 수 있으므로 체크
+    if (data.detail) {
+      aiPatternName.textContent = "분석 실패";
+      aiFunFact.textContent = data.detail;
+      return;
+    }
+    aiPatternName.textContent = data.pattern_name || "패턴 인식 불가";
+    aiFunFact.textContent = data.fun_fact || "설명을 불러올 수 없습니다.";
+  }).catch(err => {
+    aiPatternName.textContent = "오류 발생";
+    aiFunFact.textContent = "AI 서버와 통신할 수 없습니다.";
+  });
+
 };
 
 // ---------- overlay drawing ----------

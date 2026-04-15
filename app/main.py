@@ -20,6 +20,7 @@ from .data_io import (
 )
 from .features import dict_to_matrix, normalize_pipeline
 from .similar import rank_top_k
+from .ai_analyzer import analyze_sketch_pattern
 from . import db_io
 
 # Logging configuration
@@ -386,3 +387,22 @@ def similar_db(request: Request, req: SketchRequest):
     except Exception as e:
         logger.error(f"Similar DB search failed: {e}")
         raise HTTPException(500, f"DB 유사도 검색 실패: {str(e)}")
+
+@app.post("/analyze_pattern")
+@limiter.limit("30/minute") # Setting a somewhat high limit for now
+def route_analyze_pattern(request: Request, req: SketchRequest):
+    """
+    AI를 이용해 스케치 패턴 분석 (Alpha)
+    """
+    try:
+        y = np.array(req.y, dtype=float)
+        sketch_vec = normalize_pipeline(y, target_len=128)
+        if np.any(np.isnan(sketch_vec)):
+            sketch_vec = np.nan_to_num(sketch_vec, nan=0.0)
+            
+        result = analyze_sketch_pattern(sketch_vec.tolist())
+        return result
+    except Exception as e:
+        logger.error(f"Pattern analysis failed: {e}")
+        raise HTTPException(500, f"패턴 분석 실패: {str(e)}")
+

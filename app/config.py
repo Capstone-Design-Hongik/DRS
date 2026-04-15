@@ -12,6 +12,9 @@ class Settings(BaseSettings):
     api_port: int = 8080
     api_title: str = "DRS - Drawing Stock"
 
+    # AI Features
+    gemini_api_key: str = ""
+
     # CORS Settings
     cors_origins: str = '["http://localhost:8080", "http://127.0.0.1:8080"]'
 
